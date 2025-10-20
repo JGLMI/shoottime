@@ -1,6 +1,25 @@
+
 import { useEffect, useMemo, useState } from "react";
 import { db, type DayEntry } from "../stores/db";
 import { keyDay, keyMonth } from "../utils/time";
+
+// === Sync vers Google Sheets (Apps Script) ===
+const SYNC_URL = 'https://script.google.com/macros/s/AKfycbwXXvxmMY3245iB3iIvrClk74IylADBVbMwjdZY6XaaincMTL8M-GfrmiDMf2i8rg4T/exec';
+const SYNC_SECRET = 'wami'; // 
+async function syncToSheet() {
+  try {
+    const rows = await db.days.toArray();
+    await fetch(SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request (pas de CORS preflight)
+      body: JSON.stringify({ secret: SYNC_SECRET, rows })
+    });
+  } catch (e) {
+    console.error('Sync error', e);
+    alert("Sync Google Sheets échouée. Réessaie plus tard.");
+  }
+}
+
 
 // Formatteur de valeur
 function labelFor(v: number | undefined) {
@@ -43,6 +62,7 @@ export default function Days() {
     const rows = await db.days.where("monthKey").equals(month).toArray();
     rows.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
     setMonthRows(rows);
+    syncToSheet();
   }
 
   // Supprimer
@@ -54,6 +74,7 @@ export default function Days() {
       const rows = await db.days.where("monthKey").equals(month).toArray();
       rows.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
       setMonthRows(rows);
+      syncToSheet();
     }
   }
 
