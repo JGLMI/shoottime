@@ -1,40 +1,54 @@
-
 import { useEffect, useMemo, useState } from "react";
 import { db, type DayEntry } from "../stores/db";
 import { keyDay, keyMonth } from "../utils/time";
 
-// === Sync vers Google Sheets (Apps Script) ===
+
 const SYNC_URL = 'https://script.google.com/macros/s/AKfycbwXXvxmMY3245iB3iIvrClk74IylADBVbMwjdZY6XaaincMTL8M-GfrmiDMf2i8rg4T/exec';
 const SYNC_SECRET = 'wami'; // 
-async function syncToSheet() {
-  try {
-    const rows = await db.days.toArray();
-    await fetch(SYNC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request (pas de CORS preflight)
-      body: JSON.stringify({ secret: SYNC_SECRET, rows })
-    });
-  } catch (e) {
-    console.error('Sync error', e);
-    alert("Sync Google Sheets échouée. Réessaie plus tard.");
-  }
-}
 
-
-// Formatteur de valeur
 function labelFor(v: number | undefined) {
   if (v === 1) return "Journée entière";
   if (v === 0.5) return "Demi-journée";
   return "—";
 }
 
+// Fallback UUID compatible mobiles un peu anciens
+const uid = () =>
+  (globalThis.crypto && "randomUUID" in globalThis.crypto
+    ? (globalThis.crypto as any).randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+
 export default function Days() {
+  // Etat UI / données
   const [dateISO, setDateISO] = useState(() => keyDay(new Date()));
   const month = useMemo(() => keyMonth(new Date(dateISO)), [dateISO]);
-  const [todayValue, setTodayValue] = useState<number | undefined>();
+  const [todayValue, setTodayValue] = useState<number | undefined>(undefined);
   const [monthRows, setMonthRows] = useState<DayEntry[]>([]);
 
-  // Charger les données
+  // Toast simple (Bootstrap alert)
+  const [toast, setToast] = useState<string>("");
+  function notify(msg: string) {
+    setToast(msg);
+    window.setTimeout(() => setToast(""), 1800);
+  }
+
+  // Sync Google Sheets (dans le composant pour accéder à notify)
+  async function syncToSheet() {
+    try {
+      const rows = await db.days.toArray();
+      await fetch(SYNC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" }, // évite le preflight CORS
+        body: JSON.stringify({ secret: SYNC_SECRET, rows }),
+      });
+      notify("✅ Données synchronisées");
+    } catch (e) {
+      console.error("Sync error", e);
+      alert("❌ Échec de la synchro Google Sheets");
+    }
+  }
+
+  // Charger la valeur du jour + la liste du mois
   useEffect(() => {
     (async () => {
       const day = await db.days.where("dateKey").equals(dateISO).first();
@@ -45,36 +59,45 @@ export default function Days() {
     })();
   }, [dateISO, month]);
 
-  // Ajouter / modifier
+  // Actions
   async function setDay(value: 1 | 0.5) {
-    const existing = await db.days.where("dateKey").equals(dateISO).first();
-    if (existing) {
-      await db.days.update(existing.id!, { value });
-    } else {
-      await db.days.add({
-        id: crypto.randomUUID(),
-        dateKey: dateISO,
-        monthKey: month,
-        value,
-      });
-    }
-    setTodayValue(value);
-    const rows = await db.days.where("monthKey").equals(month).toArray();
-    rows.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
-    setMonthRows(rows);
-    syncToSheet();
-  }
-
-  // Supprimer
-  async function clearDay() {
-    const existing = await db.days.where("dateKey").equals(dateISO).first();
-    if (existing?.id) {
-      await db.days.delete(existing.id);
-      setTodayValue(undefined);
+    try {
+      const existing = await db.days.where("dateKey").equals(dateISO).first();
+      if (existing?.id) {
+        await db.days.update(existing.id, { value });
+      } else {
+        await db.days.add({
+          id: uid(),
+          dateKey: dateISO,
+          monthKey: month,
+          value,
+        });
+      }
+      setTodayValue(value);
       const rows = await db.days.where("monthKey").equals(month).toArray();
       rows.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
       setMonthRows(rows);
-      syncToSheet();
+      await syncToSheet();
+    } catch (e) {
+      console.error(e);
+      alert("Impossible d’enregistrer (désactive la navigation privée et réessaie).");
+    }
+  }
+
+  async function clearDay() {
+    try {
+      const existing = await db.days.where("dateKey").equals(dateISO).first();
+      if (existing?.id) {
+        await db.days.delete(existing.id);
+        setTodayValue(undefined);
+        const rows = await db.days.where("monthKey").equals(month).toArray();
+        rows.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+        setMonthRows(rows);
+        await syncToSheet();
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Suppression impossible. Essaie en mode normal (pas privé).");
     }
   }
 
@@ -127,10 +150,7 @@ export default function Days() {
             >
               🕐 Demi-journée
             </button>
-            <button
-              className="btn btn-sm btn-outline-danger ms-auto"
-              onClick={clearDay}
-            >
+            <button className="btn btn-sm btn-outline-danger ms-auto" onClick={clearDay}>
               ✖️ Effacer
             </button>
           </div>
@@ -193,9 +213,22 @@ export default function Days() {
         </div>
       </div>
 
+      {/* Toast de confirmation */}
+      <div
+        className={`position-fixed bottom-0 start-50 translate-middle-x mb-3 ${
+          toast ? "" : "d-none"
+        }`}
+        style={{ zIndex: 1080 }}
+      >
+        <div className="alert alert-success shadow-sm py-2 px-3 mb-0" role="alert">
+          {toast}
+        </div>
+      </div>
+
       <p className="text-center text-muted small mt-4 mb-0">
-        Données locales • PWA offline
+        Données locales • PWA offline • Sync Google Sheets
       </p>
     </div>
   );
 }
+
