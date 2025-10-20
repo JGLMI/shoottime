@@ -1,4 +1,5 @@
-import Days from "./pages/Days";
+import Days from "./pages/days";
+
 
 export default function App() {
   return (
