@@ -1,5 +1,5 @@
 // Cache ultra simple pour le offline
-const CACHE = "shoottime-v1";
+const CACHE = "shoottime-v3";
 const ASSETS = ["/","/index.html","/manifest.webmanifest","/service-worker.js"];
 
 self.addEventListener("install", e => {
